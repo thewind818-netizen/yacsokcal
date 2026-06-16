@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>약속달력 📅</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- 로그인 화면 -->
+  <div id="login-screen" class="screen">
+    <div class="login-box">
+      <div class="logo">📅</div>
+      <h1>약속달력</h1>
+      <p class="subtitle">친구들과 일정을 공유하세요</p>
+      <input id="login-name" type="text" placeholder="닉네임을 입력하세요" maxlength="10" />
+      <button onclick="login()">시작하기</button>
+      <p class="hint">닉네임만 입력하면 바로 사용 가능해요.<br>같은 닉네임으로 재접속하면 내 일정이 유지됩니다.</p>
+    </div>
+  </div>
+
+  <!-- 메인 앱 화면 -->
+  <div id="app-screen" class="screen hidden">
+
+    <!-- 상단 바 -->
+    <header>
+      <div class="header-left">
+        <span class="logo-small">📅 약속달력</span>
+      </div>
+      <div class="header-right">
+        <span id="header-username"></span>
+        <button class="btn-icon" onclick="copyShareLink()" title="내 공개 링크 복사">🔗 공유링크</button>
+        <button class="btn-icon" onclick="logout()">로그아웃</button>
+      </div>
+    </header>
+
+    <div class="layout">
+
+      <!-- 왼쪽 사이드바: 친구 목록 -->
+      <aside>
+        <div class="aside-section">
+          <h3>내 달력</h3>
+          <div class="user-badge" id="my-badge"></div>
+        </div>
+        <div class="aside-section">
+          <h3>친구 달력 보기</h3>
+          <div id="friend-list"></div>
+          <div class="add-friend-row">
+            <input id="friend-input" type="text" placeholder="친구 닉네임 입력" />
+            <button onclick="addFriend()">추가</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- 달력 메인 -->
+      <main>
+        <div class="cal-header">
+          <button onclick="changeMonth(-1)">‹</button>
+          <h2 id="cal-title"></h2>
+          <button onclick="changeMonth(1)">›</button>
+          <button class="btn-primary" onclick="openModal()">+ 약속 추가</button>
+        </div>
+        <div class="weekdays">
+          <span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span>
+        </div>
+        <div class="days" id="days-grid"></div>
+      </main>
+
+      <!-- 오른쪽: 선택된 날 상세 -->
+      <aside class="right-aside">
+        <div class="aside-section">
+          <h3 id="selected-date-title">일정 상세</h3>
+          <div id="event-detail-list"><p class="empty-msg">날짜를 클릭하면<br>약속이 표시됩니다</p></div>
+        </div>
+        <div class="aside-section">
+          <h3>공개 설정 기본값</h3>
+          <div class="privacy-radios">
+            <label><input type="radio" name="default-privacy" value="public" /> 🌐 전체공개</label>
+            <label><input type="radio" name="default-privacy" value="friends" checked /> 👥 친구만</label>
+            <label><input type="radio" name="default-privacy" value="private" /> 🔒 나만보기</label>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- 약속 추가 모달 -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="closeModalOutside(event)">
+    <div class="modal">
+      <h3>약속 추가</h3>
+      <label>약속 이름</label>
+      <input id="m-title" type="text" placeholder="예: 점심 약속" />
+
+      <label>날짜</label>
+      <input id="m-date" type="date" />
+
+      <label>시간</label>
+      <input id="m-time" type="time" value="12:00" />
+
+      <label>장소 (선택)</label>
+      <input id="m-place" type="text" placeholder="예: 강남역 근처" />
+
+      <label>메모 (선택)</label>
+      <input id="m-memo" type="text" placeholder="짧은 메모" />
+
+      <label>공개 설정</label>
+      <select id="m-privacy">
+        <option value="public">🌐 전체공개 — 모두에게 "약속 있음"만 표시</option>
+        <option value="friends">👥 친구만 — 친구에게 내용 포함 표시</option>
+        <option value="private">🔒 나만보기 — 다른 사람에게 안 보임</option>
+      </select>
+
+      <div class="modal-actions">
+        <button onclick="closeModal()">취소</button>
+        <button class="btn-primary" onclick="saveEvent()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 약속 상세 보기 / 삭제 모달 -->
+  <div id="detail-modal-overlay" class="modal-overlay hidden" onclick="closeDetailModalOutside(event)">
+    <div class="modal">
+      <h3 id="dm-title"></h3>
+      <div id="dm-body"></div>
+      <div class="modal-actions">
+        <button onclick="closeDetailModal()">닫기</button>
+        <button class="btn-danger" id="dm-delete-btn" onclick="deleteEvent()">삭제</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
