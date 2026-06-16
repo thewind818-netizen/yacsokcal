@@ -41,6 +41,22 @@ function login() {
   document.getElementById('app-screen').classList.remove('hidden');
   document.getElementById('header-username').textContent = '👤 ' + name;
   document.getElementById('my-badge').textContent = '📅 ' + name;
+
+  // 공유 링크로 들어온 경우 자동으로 친구 추가
+  const params = new URLSearchParams(location.search);
+  const viewUser = params.get('view');
+  if (viewUser && viewUser !== currentUser) {
+    let friends = getMyFriends();
+    if (!friends.find(f => f.name === viewUser)) {
+      const color = FRIEND_COLORS[friends.length % FRIEND_COLORS.length];
+      friends.push({ name: viewUser, color });
+      saveMyFriends(friends);
+      alert('✅ ' + viewUser + ' 님이 친구로 자동 추가됐어요!');
+    }
+    // URL에서 파라미터 제거 (뒤로가기 혼란 방지)
+    history.replaceState({}, '', location.pathname);
+  }
+
   renderFriendList();
   renderCalendar();
 }
@@ -313,13 +329,22 @@ window.onload = function() {
   const last = getData('lastUser');
   if (last) document.getElementById('login-name').value = last;
 
-  // URL 파라미터로 다른 사람 달력 보기
+  // URL 파라미터로 공유 링크 진입 감지
   const params = new URLSearchParams(location.search);
   const viewUser = params.get('view');
   if (viewUser) {
-    document.getElementById('login-name').value = '';
-    setTimeout(() => {
-      alert('📅 ' + viewUser + '의 달력 링크예요!\n\n로그인 후 친구 목록에 "' + viewUser + '"을 추가하면 일정이 보입니다.');
-    }, 500);
+    // 이미 로그인된 경우 바로 친구 추가
+    if (last) {
+      // 로그인 후 처리되도록 힌트 배너 표시
+      const hint = document.createElement('p');
+      hint.style.cssText = 'background:#eeedfe;color:#3C3489;padding:10px 16px;border-radius:8px;font-size:13px;margin-top:12px;text-align:center;';
+      hint.innerHTML = '📅 <b>' + viewUser + '</b> 님의 공유 링크예요!<br>로그인하면 자동으로 친구 추가됩니다.';
+      document.querySelector('.login-box').appendChild(hint);
+    } else {
+      const hint = document.createElement('p');
+      hint.style.cssText = 'background:#eeedfe;color:#3C3489;padding:10px 16px;border-radius:8px;font-size:13px;margin-top:12px;text-align:center;';
+      hint.innerHTML = '📅 <b>' + viewUser + '</b> 님의 공유 링크예요!<br>닉네임을 입력하고 시작하면 자동으로 친구 추가됩니다.';
+      document.querySelector('.login-box').appendChild(hint);
+    }
   }
 };
