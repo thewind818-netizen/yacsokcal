@@ -17,43 +17,46 @@
       <input id="login-name" type="text" placeholder="닉네임을 입력하세요" maxlength="10" />
       <button onclick="login()">시작하기</button>
       <p class="hint">닉네임만 입력하면 바로 사용 가능해요.<br>같은 닉네임으로 재접속하면 내 일정이 유지됩니다.</p>
+      <div id="login-banner"></div>
     </div>
   </div>
 
   <!-- 메인 앱 화면 -->
   <div id="app-screen" class="screen hidden">
-
-    <!-- 상단 바 -->
     <header>
       <div class="header-left">
         <span class="logo-small">📅 약속달력</span>
       </div>
       <div class="header-right">
         <span id="header-username"></span>
-        <button class="btn-icon" onclick="copyShareLink()" title="내 공개 링크 복사">🔗 공유링크</button>
+        <button class="btn-icon" onclick="copyShareLink()">🔗 공유링크</button>
         <button class="btn-icon" onclick="logout()">로그아웃</button>
       </div>
     </header>
 
     <div class="layout">
 
-      <!-- 왼쪽 사이드바: 친구 목록 -->
+      <!-- 왼쪽: 친구 목록 -->
       <aside>
         <div class="aside-section">
           <h3>내 달력</h3>
           <div class="user-badge" id="my-badge"></div>
         </div>
         <div class="aside-section">
-          <h3>친구 달력 보기</h3>
-          <div id="friend-list"></div>
+          <h3>친구 목록</h3>
+          <div id="friend-list"><p class="empty-msg">친구를 추가해보세요</p></div>
           <div class="add-friend-row">
-            <input id="friend-input" type="text" placeholder="친구 닉네임 입력" />
-            <button onclick="addFriend()">추가</button>
+            <input id="friend-input" type="text" placeholder="친구 닉네임" />
+            <button onclick="sendFriendRequest()">추가</button>
           </div>
+        </div>
+        <div class="aside-section">
+          <h3>받은 친구 요청</h3>
+          <div id="request-list"><p class="empty-msg">없음</p></div>
         </div>
       </aside>
 
-      <!-- 달력 메인 -->
+      <!-- 달력 -->
       <main>
         <div class="cal-header">
           <button onclick="changeMonth(-1)">‹</button>
@@ -72,14 +75,6 @@
         <div class="aside-section">
           <h3 id="selected-date-title">일정 상세</h3>
           <div id="event-detail-list"><p class="empty-msg">날짜를 클릭하면<br>약속이 표시됩니다</p></div>
-        </div>
-        <div class="aside-section">
-          <h3>공개 설정 기본값</h3>
-          <div class="privacy-radios">
-            <label><input type="radio" name="default-privacy" value="public" /> 🌐 전체공개</label>
-            <label><input type="radio" name="default-privacy" value="friends" checked /> 👥 친구만</label>
-            <label><input type="radio" name="default-privacy" value="private" /> 🔒 나만보기</label>
-          </div>
         </div>
       </aside>
     </div>
@@ -108,8 +103,14 @@
       <select id="m-privacy">
         <option value="public">🌐 전체공개 — 모두에게 "약속 있음"만 표시</option>
         <option value="friends">👥 친구만 — 친구에게 내용 포함 표시</option>
-        <option value="private">🔒 나만보기 — 다른 사람에게 안 보임</option>
+        <option value="selected">👤 특정 친구만 — 선택한 친구에게만 표시</option>
+        <option value="private">🔒 나만보기</option>
       </select>
+
+      <div id="friend-select-box" class="hidden">
+        <label>공개할 친구 선택</label>
+        <div id="friend-checkboxes"></div>
+      </div>
 
       <div class="modal-actions">
         <button onclick="closeModal()">취소</button>
@@ -118,18 +119,7 @@
     </div>
   </div>
 
-  <!-- 약속 상세 보기 / 삭제 모달 -->
-  <div id="detail-modal-overlay" class="modal-overlay hidden" onclick="closeDetailModalOutside(event)">
-    <div class="modal">
-      <h3 id="dm-title"></h3>
-      <div id="dm-body"></div>
-      <div class="modal-actions">
-        <button onclick="closeDetailModal()">닫기</button>
-        <button class="btn-danger" id="dm-delete-btn" onclick="deleteEvent()">삭제</button>
-      </div>
-    </div>
-  </div>
-
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

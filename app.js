@@ -1,74 +1,178 @@
+// ── Supabase 클라이언트 ──
+const sb = (() => {
+  const headers = { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
+
+  async function query(table, params = '') {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${params}`, { headers });
+    return res.json();
+  }
+  async function insert(table, body) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+      method: 'POST', headers: { ...headers, 'Prefer': 'return=representation' },
+      body: JSON.stringify(body)
+    });
+    return res.json();
+  }
+  async function remove(table, params) {
+    await fetch(`${SUPABASE_URL}/rest/v1/${table}${params}`, { method: 'DELETE', headers });
+  }
+  return { query, insert, remove };
+})();
+
 // ── 상태 ──
 let currentUser = null;
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 let selectedDate = null;
-let selectedEventId = null;
-
-const FRIEND_COLORS = ['#534AB7','#1D9E75','#D85A30','#D4537E','#BA7517','#378ADD'];
-
-// ── 스토리지 유틸 ──
-function getData(key) {
-  try { return JSON.parse(localStorage.getItem(key)) || null; } catch { return null; }
-}
-function setData(key, val) {
-  localStorage.setItem(key, JSON.stringify(val));
-}
-
-// ── 사용자 이벤트 저장/조회 ──
-function getUserEvents(username) {
-  return getData('events_' + username) || [];
-}
-function saveUserEvents(username, events) {
-  setData('events_' + username, events);
-}
-
-// ── 친구 목록 저장/조회 ──
-function getMyFriends() {
-  return getData('friends_' + currentUser) || [];
-}
-function saveMyFriends(friends) {
-  setData('friends_' + currentUser, friends);
-}
+let myFriends = []; // 수락된 친구 목록
+const COLORS = ['#534AB7','#1D9E75','#D85A30','#D4537E','#BA7517','#378ADD'];
 
 // ── 로그인 ──
-function login() {
+async function login() {
   const name = document.getElementById('login-name').value.trim();
   if (!name) { alert('닉네임을 입력해주세요!'); return; }
   currentUser = name;
-  setData('lastUser', name);
+  localStorage.setItem('lastUser', name);
+
+  // 유저 등록 (없으면 새로 생성)
+  const existing = await sb.query('users', `?id=eq.${encodeURIComponent(name)}`);
+  if (!existing.length) await sb.insert('users', { id: name });
+
+  // 공유링크로 들어온 경우 자동 친구 요청
+  const params = new URLSearchParams(location.search);
+  const viewUser = params.get('view');
+  if (viewUser && viewUser !== currentUser) {
+    await sendFriendRequestTo(viewUser);
+    history.replaceState({}, '', location.pathname);
+  }
+
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app-screen').classList.remove('hidden');
   document.getElementById('header-username').textContent = '👤 ' + name;
   document.getElementById('my-badge').textContent = '📅 ' + name;
 
-  // 공유 링크로 들어온 경우 자동으로 친구 추가
-  const params = new URLSearchParams(location.search);
-  const viewUser = params.get('view');
-  if (viewUser && viewUser !== currentUser) {
-    let friends = getMyFriends();
-    if (!friends.find(f => f.name === viewUser)) {
-      const color = FRIEND_COLORS[friends.length % FRIEND_COLORS.length];
-      friends.push({ name: viewUser, color });
-      saveMyFriends(friends);
-      alert('✅ ' + viewUser + ' 님이 친구로 자동 추가됐어요!');
-    }
-    // URL에서 파라미터 제거 (뒤로가기 혼란 방지)
-    history.replaceState({}, '', location.pathname);
-  }
-
-  renderFriendList();
+  await loadFriends();
   renderCalendar();
 }
 
 function logout() {
   currentUser = null;
+  myFriends = [];
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('login-name').value = '';
 }
 
-// ── 달력 렌더 ──
+// ── 친구 관계 로드 ──
+async function loadFriends() {
+  // 수락된 친구 (양방향 모두 있는 경우)
+  const sent = await sb.query('friendships', `?from_user=eq.${encodeURIComponent(currentUser)}&status=eq.accepted`);
+  const received = await sb.query('friendships', `?to_user=eq.${encodeURIComponent(currentUser)}&status=eq.accepted`);
+
+  const friendNames = new Set();
+  sent.forEach(r => friendNames.add(r.to_user));
+  received.forEach(r => friendNames.add(r.from_user));
+  myFriends = [...friendNames].map((name, i) => ({ name, color: COLORS[i % COLORS.length] }));
+
+  renderFriendList();
+  await loadFriendRequests();
+}
+
+function renderFriendList() {
+  const el = document.getElementById('friend-list');
+  if (!myFriends.length) {
+    el.innerHTML = '<p class="empty-msg">아직 친구가 없어요</p>';
+    return;
+  }
+  el.innerHTML = myFriends.map(f =>
+    `<div class="friend-item">
+      <div class="friend-dot" style="background:${f.color}"></div>
+      <span>${f.name}</span>
+      <button class="friend-remove" onclick="removeFriend('${f.name}')">✕</button>
+    </div>`
+  ).join('');
+}
+
+// ── 친구 요청 ──
+async function sendFriendRequest() {
+  const name = document.getElementById('friend-input').value.trim();
+  if (!name) return;
+  if (name === currentUser) { alert('자기 자신은 추가할 수 없어요!'); return; }
+  await sendFriendRequestTo(name);
+  document.getElementById('friend-input').value = '';
+}
+
+async function sendFriendRequestTo(toUser) {
+  // 이미 요청했거나 친구인지 확인
+  const existing = await sb.query('friendships',
+    `?from_user=eq.${encodeURIComponent(currentUser)}&to_user=eq.${encodeURIComponent(toUser)}`);
+  if (existing.length) { alert(toUser + ' 님에게 이미 요청을 보냈어요!'); return; }
+
+  const reverse = await sb.query('friendships',
+    `?from_user=eq.${encodeURIComponent(toUser)}&to_user=eq.${encodeURIComponent(currentUser)}`);
+
+  if (reverse.length && reverse[0].status === 'pending') {
+    // 상대방이 이미 나한테 요청 보냈으면 바로 수락
+    await fetch(`${SUPABASE_URL}/rest/v1/friendships?id=eq.${reverse[0].id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
+      body: JSON.stringify({ status: 'accepted' })
+    });
+    await sb.insert('friendships', { id: Date.now() + 'x', from_user: currentUser, to_user: toUser, status: 'accepted' });
+    alert('✅ ' + toUser + ' 님과 친구가 됐어요!');
+  } else if (reverse.length && reverse[0].status === 'accepted') {
+    alert(toUser + ' 님은 이미 친구예요!');
+    return;
+  } else {
+    await sb.insert('friendships', { id: Date.now().toString(), from_user: currentUser, to_user: toUser, status: 'pending' });
+    alert('📨 ' + toUser + ' 님에게 친구 요청을 보냈어요!\n상대방이 앱에 접속하면 요청이 보입니다.');
+  }
+  await loadFriends();
+  renderCalendar();
+}
+
+async function loadFriendRequests() {
+  const requests = await sb.query('friendships',
+    `?to_user=eq.${encodeURIComponent(currentUser)}&status=eq.pending`);
+  const el = document.getElementById('request-list');
+  if (!requests.length) {
+    el.innerHTML = '<p class="empty-msg">없음</p>';
+    return;
+  }
+  el.innerHTML = requests.map(r =>
+    `<div class="friend-item">
+      <span>👤 ${r.from_user}</span>
+      <button onclick="acceptFriend('${r.id}', '${r.from_user}')" style="font-size:12px;padding:4px 8px;background:#534AB7;color:white;border:none;border-radius:6px;margin-left:auto;">수락</button>
+      <button onclick="rejectFriend('${r.id}')" style="font-size:12px;padding:4px 8px;margin-left:4px;">거절</button>
+    </div>`
+  ).join('');
+}
+
+async function acceptFriend(id, fromUser) {
+  await fetch(`${SUPABASE_URL}/rest/v1/friendships?id=eq.${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
+    body: JSON.stringify({ status: 'accepted' })
+  });
+  await sb.insert('friendships', { id: Date.now().toString(), from_user: currentUser, to_user: fromUser, status: 'accepted' });
+  alert('✅ ' + fromUser + ' 님과 친구가 됐어요!');
+  await loadFriends();
+  renderCalendar();
+}
+
+async function rejectFriend(id) {
+  await sb.remove('friendships', `?id=eq.${id}`);
+  await loadFriendRequests();
+}
+
+async function removeFriend(name) {
+  if (!confirm(name + ' 님을 친구 목록에서 삭제할까요?')) return;
+  await sb.remove('friendships', `?from_user=eq.${encodeURIComponent(currentUser)}&to_user=eq.${encodeURIComponent(name)}`);
+  await sb.remove('friendships', `?from_user=eq.${encodeURIComponent(name)}&to_user=eq.${encodeURIComponent(currentUser)}`);
+  await loadFriends();
+  renderCalendar();
+}
+
+// ── 달력 ──
 function changeMonth(delta) {
   currentMonth += delta;
   if (currentMonth > 11) { currentMonth = 0; currentYear++; }
@@ -76,68 +180,55 @@ function changeMonth(delta) {
   renderCalendar();
 }
 
-function renderCalendar() {
-  const title = currentYear + '년 ' + (currentMonth + 1) + '월';
-  document.getElementById('cal-title').textContent = title;
+async function renderCalendar() {
+  document.getElementById('cal-title').textContent = currentYear + '년 ' + (currentMonth + 1) + '월';
 
   const firstDay = new Date(currentYear, currentMonth, 1).getDay();
   const lastDate = new Date(currentYear, currentMonth + 1, 0).getDate();
   const prevLast = new Date(currentYear, currentMonth, 0).getDate();
   const today = new Date();
 
-  // 내 이벤트 수집
-  const myEvents = getUserEvents(currentUser);
-  // 친구 이벤트 수집
-  const friends = getMyFriends();
+  // 내 이벤트
+  const myEvents = await sb.query('events', `?owner=eq.${encodeURIComponent(currentUser)}&date=gte.${currentYear}-${String(currentMonth+1).padStart(2,'0')}-01&date=lte.${currentYear}-${String(currentMonth+1).padStart(2,'0')}-31`);
+
+  // 친구 이벤트
   const friendEventsMap = {};
-  friends.forEach(f => {
-    const fevs = getUserEvents(f.name).filter(e => e.privacy !== 'private');
-    fevs.forEach(ev => {
-      const key = ev.date;
-      if (!friendEventsMap[key]) friendEventsMap[key] = [];
-      friendEventsMap[key].push({ ...ev, friendName: f.name });
-    });
-  });
+  for (const f of myFriends) {
+    const fevs = await sb.query('events', `?owner=eq.${encodeURIComponent(f.name)}&privacy=neq.private&date=gte.${currentYear}-${String(currentMonth+1).padStart(2,'0')}-01`);
+    for (const ev of fevs) {
+      // selected 공개인 경우 내가 포함됐는지 확인
+      if (ev.privacy === 'selected') {
+        const check = await sb.query('event_friends', `?event_id=eq.${ev.id}&friend_name=eq.${encodeURIComponent(currentUser)}`);
+        if (!check.length) continue;
+      }
+      if (!friendEventsMap[ev.date]) friendEventsMap[ev.date] = [];
+      friendEventsMap[ev.date].push({ ...ev, friendName: f.name, color: f.color });
+    }
+  }
 
   const grid = document.getElementById('days-grid');
   let html = '';
 
   for (let i = 0; i < 42; i++) {
     let day, monthOffset = 0;
-    if (i < firstDay) {
-      day = prevLast - firstDay + i + 1;
-      monthOffset = -1;
-    } else if (i - firstDay + 1 > lastDate) {
-      day = i - firstDay - lastDate + 1;
-      monthOffset = 1;
-    } else {
-      day = i - firstDay + 1;
-    }
+    if (i < firstDay) { day = prevLast - firstDay + i + 1; monthOffset = -1; }
+    else if (i - firstDay + 1 > lastDate) { day = i - firstDay - lastDate + 1; monthOffset = 1; }
+    else { day = i - firstDay + 1; }
 
     const isOther = monthOffset !== 0;
     const dateStr = formatDate(currentYear, currentMonth + monthOffset, day);
-    const isToday = !isOther &&
-      today.getFullYear() === currentYear &&
-      today.getMonth() === currentMonth &&
-      today.getDate() === day;
+    const isToday = !isOther && today.getFullYear() === currentYear && today.getMonth() === currentMonth && today.getDate() === day;
     const isSelected = dateStr === selectedDate;
-
     const dow = i % 7;
-    let numClass = '';
-    if (dow === 0) numClass = 'sun-num';
-    if (dow === 6) numClass = 'sat-num';
+    let numClass = dow === 0 ? 'sun-num' : dow === 6 ? 'sat-num' : '';
 
-    // 이벤트 칩
     let chips = '';
     if (!isOther) {
-      const dayMyEvs = myEvents.filter(e => e.date === dateStr);
-      const dayFriendEvs = friendEventsMap[dateStr] || [];
-
-      dayMyEvs.slice(0, 2).forEach(ev => {
+      myEvents.filter(e => e.date === dateStr).slice(0, 2).forEach(ev => {
         const cls = ev.privacy === 'private' ? 'chip-private' : 'chip-mine';
         chips += `<div class="event-chip ${cls}">${ev.title}</div>`;
       });
-      dayFriendEvs.slice(0, 2).forEach(ev => {
+      (friendEventsMap[dateStr] || []).slice(0, 2).forEach(ev => {
         if (ev.privacy === 'public') {
           chips += `<div class="event-chip chip-busy">${ev.friendName}: 약속있음</div>`;
         } else {
@@ -146,38 +237,33 @@ function renderCalendar() {
       });
     }
 
-    html += `<div class="day-cell${isOther ? ' other-month' : ''}${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}"
-      onclick="selectDay('${dateStr}', ${isOther})">
-      <div class="day-num ${numClass}">${day}</div>
-      ${chips}
+    html += `<div class="day-cell${isOther?' other-month':''}${isToday?' today':''}${isSelected?' selected':''}" onclick="selectDay('${dateStr}', ${isOther})">
+      <div class="day-num ${numClass}">${day}</div>${chips}
     </div>`;
   }
-
   grid.innerHTML = html;
 }
 
 function formatDate(y, m, d) {
   const mm = ((m % 12) + 12) % 12;
   let yr = y;
-  if (m < 0) yr--;
-  if (m > 11) yr++;
-  return yr + '-' + String(mm + 1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+  if (m < 0) yr--; if (m > 11) yr++;
+  return yr + '-' + String(mm+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
 }
 
 // ── 날짜 선택 ──
-function selectDay(dateStr, isOther) {
+async function selectDay(dateStr, isOther) {
   if (isOther) return;
   selectedDate = dateStr;
-  const [y, m, d] = dateStr.split('-');
-  document.getElementById('selected-date-title').textContent = m + '월 ' + parseInt(d) + '일 일정';
+  const [,m,d] = dateStr.split('-');
+  document.getElementById('selected-date-title').textContent = parseInt(m) + '월 ' + parseInt(d) + '일 일정';
   document.getElementById('m-date').value = dateStr;
-  renderDayDetail(dateStr);
+  await renderDayDetail(dateStr);
   renderCalendar();
 }
 
-function renderDayDetail(dateStr) {
-  const myEvents = getUserEvents(currentUser).filter(e => e.date === dateStr);
-  const friends = getMyFriends();
+async function renderDayDetail(dateStr) {
+  const myEvents = await sb.query('events', `?owner=eq.${encodeURIComponent(currentUser)}&date=eq.${dateStr}`);
   let html = '';
 
   myEvents.forEach(ev => {
@@ -193,9 +279,13 @@ function renderDayDetail(dateStr) {
     </div>`;
   });
 
-  friends.forEach(f => {
-    const fevs = getUserEvents(f.name).filter(e => e.date === dateStr && e.privacy !== 'private');
-    fevs.forEach(ev => {
+  for (const f of myFriends) {
+    const fevs = await sb.query('events', `?owner=eq.${encodeURIComponent(f.name)}&date=eq.${dateStr}&privacy=neq.private`);
+    for (const ev of fevs) {
+      if (ev.privacy === 'selected') {
+        const check = await sb.query('event_friends', `?event_id=eq.${ev.id}&friend_name=eq.${encodeURIComponent(currentUser)}`);
+        if (!check.length) continue;
+      }
       if (ev.privacy === 'public') {
         html += `<div class="event-detail-card friend-event">
           <div class="evt-title">🟡 ${f.name} — 약속 있음</div>
@@ -203,15 +293,12 @@ function renderDayDetail(dateStr) {
         </div>`;
       } else {
         html += `<div class="event-detail-card friend-event">
-          <div class="evt-title">🟢 ${f.name} — ${ev.title}</div>
-          <div class="evt-meta">
-            ⏰ ${ev.time || '시간 미정'}<br>
-            ${ev.place ? '📍 ' + ev.place + '<br>' : ''}
-          </div>
+          <div class="evt-title" style="color:${f.color}">● ${f.name} — ${ev.title}</div>
+          <div class="evt-meta">⏰ ${ev.time || '시간 미정'}${ev.place ? '<br>📍 ' + ev.place : ''}</div>
         </div>`;
       }
-    });
-  });
+    }
+  }
 
   if (!html) html = '<p class="empty-msg">이 날은 약속이 없어요</p>';
   document.getElementById('event-detail-list').innerHTML = html;
@@ -220,131 +307,96 @@ function renderDayDetail(dateStr) {
 function privacyLabel(p) {
   if (p === 'public') return '🌐 전체공개';
   if (p === 'friends') return '👥 친구만';
+  if (p === 'selected') return '👤 특정 친구만';
   return '🔒 나만보기';
 }
 
-// ── 약속 추가 ──
+// ── 약속 추가 모달 ──
 function openModal() {
   if (!selectedDate) {
-    const today = new Date();
-    document.getElementById('m-date').value = formatDate(today.getFullYear(), today.getMonth(), today.getDate());
+    const t = new Date();
+    document.getElementById('m-date').value = formatDate(t.getFullYear(), t.getMonth(), t.getDate());
   }
-  // 기본 공개 설정 반영
-  const defaultPrivacy = document.querySelector('input[name="default-privacy"]:checked').value;
-  document.getElementById('m-privacy').value = defaultPrivacy;
+  // 친구 체크박스 렌더
+  const box = document.getElementById('friend-checkboxes');
+  box.innerHTML = myFriends.map(f =>
+    `<label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;font-size:13px;">
+      <input type="checkbox" value="${f.name}" /> ${f.name}
+    </label>`
+  ).join('') || '<p class="empty-msg" style="font-size:12px;">친구가 없어요</p>';
+
   document.getElementById('modal-overlay').classList.remove('hidden');
+  document.getElementById('m-privacy').onchange = toggleFriendSelect;
+}
+
+function toggleFriendSelect() {
+  const val = document.getElementById('m-privacy').value;
+  document.getElementById('friend-select-box').classList.toggle('hidden', val !== 'selected');
 }
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
-  document.getElementById('m-title').value = '';
-  document.getElementById('m-place').value = '';
-  document.getElementById('m-memo').value = '';
+  ['m-title','m-place','m-memo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('friend-select-box').classList.add('hidden');
 }
+function closeModalOutside(e) { if (e.target.id === 'modal-overlay') closeModal(); }
 
-function closeModalOutside(e) {
-  if (e.target.id === 'modal-overlay') closeModal();
-}
-
-function saveEvent() {
+async function saveEvent() {
   const title = document.getElementById('m-title').value.trim();
   const date = document.getElementById('m-date').value;
   if (!title) { alert('약속 이름을 입력해주세요!'); return; }
   if (!date) { alert('날짜를 선택해주세요!'); return; }
 
-  const ev = {
-    id: Date.now().toString(),
-    title,
-    date,
+  const privacy = document.getElementById('m-privacy').value;
+  const id = Date.now().toString();
+
+  await sb.insert('events', {
+    id, owner: currentUser, title, date,
     time: document.getElementById('m-time').value,
     place: document.getElementById('m-place').value.trim(),
     memo: document.getElementById('m-memo').value.trim(),
-    privacy: document.getElementById('m-privacy').value,
-  };
+    privacy
+  });
 
-  const events = getUserEvents(currentUser);
-  events.push(ev);
-  saveUserEvents(currentUser, events);
-  closeModal();
-  if (selectedDate === date) renderDayDetail(date);
-  renderCalendar();
-}
-
-function deleteEventById(id) {
-  if (!confirm('이 약속을 삭제할까요?')) return;
-  let events = getUserEvents(currentUser).filter(e => e.id !== id);
-  saveUserEvents(currentUser, events);
-  if (selectedDate) renderDayDetail(selectedDate);
-  renderCalendar();
-}
-
-// ── 친구 관리 ──
-function addFriend() {
-  const name = document.getElementById('friend-input').value.trim();
-  if (!name) return;
-  if (name === currentUser) { alert('자기 자신은 추가할 수 없어요!'); return; }
-  let friends = getMyFriends();
-  if (friends.find(f => f.name === name)) { alert('이미 추가된 친구예요!'); return; }
-  const color = FRIEND_COLORS[friends.length % FRIEND_COLORS.length];
-  friends.push({ name, color });
-  saveMyFriends(friends);
-  document.getElementById('friend-input').value = '';
-  renderFriendList();
-  renderCalendar();
-}
-
-function removeFriend(name) {
-  let friends = getMyFriends().filter(f => f.name !== name);
-  saveMyFriends(friends);
-  renderFriendList();
-  renderCalendar();
-}
-
-function renderFriendList() {
-  const friends = getMyFriends();
-  const el = document.getElementById('friend-list');
-  if (!friends.length) {
-    el.innerHTML = '<p class="empty-msg">친구를 추가하면<br>일정이 함께 보여요</p>';
-    return;
+  // 특정 친구만 공개인 경우 event_friends 에 저장
+  if (privacy === 'selected') {
+    const checked = [...document.querySelectorAll('#friend-checkboxes input:checked')].map(el => el.value);
+    for (const fname of checked) {
+      await sb.insert('event_friends', { event_id: id, friend_name: fname });
+    }
   }
-  el.innerHTML = friends.map(f =>
-    `<div class="friend-item">
-      <div class="friend-dot" style="background:${f.color}"></div>
-      <span>${f.name}</span>
-      <button class="friend-remove" onclick="removeFriend('${f.name}')">✕</button>
-    </div>`
-  ).join('');
+
+  closeModal();
+  if (selectedDate === date) await renderDayDetail(date);
+  renderCalendar();
+}
+
+async function deleteEventById(id) {
+  if (!confirm('이 약속을 삭제할까요?')) return;
+  await sb.remove('events', `?id=eq.${id}`);
+  await sb.remove('event_friends', `?event_id=eq.${id}`);
+  if (selectedDate) await renderDayDetail(selectedDate);
+  renderCalendar();
 }
 
 // ── 공유 링크 ──
 function copyShareLink() {
   const url = location.href.split('?')[0] + '?view=' + encodeURIComponent(currentUser);
   navigator.clipboard.writeText(url).then(() => {
-    alert('공유 링크가 복사됐어요! 친구에게 보내면,\n친구가 앱에서 내 닉네임(' + currentUser + ')을 추가할 수 있어요 😊');
+    alert('🔗 공유 링크가 복사됐어요!\n친구가 이 링크로 접속하면 자동으로 친구 요청이 보내집니다.');
   });
 }
 
 // ── 자동 로그인 ──
 window.onload = function() {
-  const last = getData('lastUser');
+  const last = localStorage.getItem('lastUser');
   if (last) document.getElementById('login-name').value = last;
 
-  // URL 파라미터로 공유 링크 진입 감지
   const params = new URLSearchParams(location.search);
   const viewUser = params.get('view');
   if (viewUser) {
-    // 이미 로그인된 경우 바로 친구 추가
-    if (last) {
-      // 로그인 후 처리되도록 힌트 배너 표시
-      const hint = document.createElement('p');
-      hint.style.cssText = 'background:#eeedfe;color:#3C3489;padding:10px 16px;border-radius:8px;font-size:13px;margin-top:12px;text-align:center;';
-      hint.innerHTML = '📅 <b>' + viewUser + '</b> 님의 공유 링크예요!<br>로그인하면 자동으로 친구 추가됩니다.';
-      document.querySelector('.login-box').appendChild(hint);
-    } else {
-      const hint = document.createElement('p');
-      hint.style.cssText = 'background:#eeedfe;color:#3C3489;padding:10px 16px;border-radius:8px;font-size:13px;margin-top:12px;text-align:center;';
-      hint.innerHTML = '📅 <b>' + viewUser + '</b> 님의 공유 링크예요!<br>닉네임을 입력하고 시작하면 자동으로 친구 추가됩니다.';
-      document.querySelector('.login-box').appendChild(hint);
-    }
+    const banner = document.getElementById('login-banner');
+    banner.style.cssText = 'background:#eeedfe;color:#3C3489;padding:10px;border-radius:8px;font-size:13px;margin-top:12px;text-align:center;';
+    banner.innerHTML = '📅 <b>' + viewUser + '</b> 님의 공유 링크예요!<br>로그인하면 자동으로 친구 요청이 전송됩니다.';
   }
 };
