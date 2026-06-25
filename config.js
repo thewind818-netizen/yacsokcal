@@ -1,0 +1,3 @@
+﻿// ⬇ 여기에 본인 Supabase 정보를 입력하세요
+const SUPABASE_URL = 'https://zfaiywhxuuantrbyoqmr.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmYWl5d2h4dXVhbnRyYnlvcW1yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMzQyNTAsImV4cCI6MjA5NzkxMDI1MH0.AN2WbWEYuAE7nxdsqREaYeSS3fdXSQA9a2rUPM6NBL8';
